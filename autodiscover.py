@@ -5,6 +5,14 @@ from ntlm import HTTPNtlmAuthHandler
 import xml # for isinstance calls
 from xml.dom.minidom import parseString
 
+# This code is used for communicating with exchange. With an email and password
+# it should be possible to follow the autodiscover protocol, and find an EWS url.
+# EWS is Exchange Web Services, and can be queried for specifics about a specific
+# user's calendar events, or even the mutual availability of users
+#
+# URL for implenting an Autodiscover-Client:
+# http://msdn.microsoft.com/en-us/library/ee332364(v=EXCHG.140).aspx
+
 # Useful for Testing
 START = "2010-12-12T00:00:00-08:00"
 END = "2011-12-19T00:00:00-08:00"
@@ -14,12 +22,21 @@ httplib.HTTPConnection.debuglevel = 1
 
 # Define Helper Functions
 
+def xml_strip_newline(xml_string):
+    return xml_string.replace('\n', '')
+
 def autodiscover_xml(email):
     """ Expects to have a string thats a valid email address for the intended exchange user
         Returns an xml string used to query the autodiscover servcie.
     """ 
 
-    return """<?xml version="1.0" encoding="utf-8"?><Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/requestschema/2006"><Request><EMailAddress>""" + email + """</EMailAddress><AcceptableResponseSchema>http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a</AcceptableResponseSchema></Request></Autodiscover>"""
+    auto_xml = """<?xml version="1.0" encoding="utf-8"?>
+    <Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/requestschema/2006">
+    <Request><EMailAddress>%(email)s</EMailAddress><AcceptableResponseSchema>
+    http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a
+    </AcceptableResponseSchema></Request></Autodiscover>""" % dict(email=email)
+
+    return xml_strip_newline(auto_xml)
 
 
 def calendaritem_xml(shape, start, end):
@@ -30,13 +47,34 @@ def calendaritem_xml(shape, start, end):
             and etc are set. This dicates the response.
     """
 
-    return  """<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"><soap:Header><t:RequestServerVersion Version="Exchange2007_SP1"/></soap:Header><soap:Body><FindItem Traversal="Shallow" xmlns="http://schemas.microsoft.com/exchange/services/2006/messages">%s<CalendarView StartDate="%s" EndDate="%s"/><ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></ParentFolderIds></FindItem></soap:Body></soap:Envelope>""" % (shape, start, end) 
+    cal_xml = """<?xml version="1.0" encoding="utf-8"?><soap:Envelope 
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema" 
+    xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" 
+    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <soap:Header><t:RequestServerVersion Version="Exchange2007_SP1"/></soap:Header><soap:Body>
+    <FindItem Traversal="Shallow" xmlns="http://schemas.microsoft.com/exchange/services/2006/messages">
+    %(shape)s<CalendarView StartDate="%(start)s" EndDate="%(end)s"/><ParentFolderIds>
+    <t:DistinguishedFolderId Id="calendar"/>
+    </ParentFolderIds></FindItem></soap:Body></soap:Envelope>""" % dict(shape=shape, start=start, end=end)
+
+    return xml_strip_newline(cal_xml)
 
 
 def default_shape():
     """ Returns an xml string of the default shape of a calendar item request
+        NOTE :: start here for further shape properties
+            http://msdn.microsoft.com/en-us/library/aa564515(EXCHG.140).aspx
     """
-    return """<ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="calendar:Start"/><t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="item:LastModifiedTime"/><t:FieldURI FieldURI="item:IsUnmodified"/><t:FieldURI FieldURI="item:Subject"/></t:AdditionalProperties></ItemShape>"""
+    shape_xml = """<ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties>
+    <t:FieldURI FieldURI="calendar:Start"/>
+    <t:FieldURI FieldURI="calendar:End"/>
+    <t:FieldURI FieldURI="item:LastModifiedTime"/>
+    <t:FieldURI FieldURI="item:IsUnmodified"/>
+    <t:FieldURI FieldURI="item:Subject"/>
+    </t:AdditionalProperties></ItemShape>"""
+
+    return xml_string_newline(auto_xml)
 
 
 def try_url(url, path, port):
@@ -382,3 +420,7 @@ def ntlm_calendar_items(ews_url, email, pw, cal_xml):
 
 def get_cal_items(email, pw):
     return calendar_items(email, pw, START, END)
+
+if __name__ == '__main__':
+	print autodiscover_xml("test@exchangetest365.onmicrosoft.com")
+	get_cal_items("test@exchangetest365.onmicrosoft.com", "283Exchange")
