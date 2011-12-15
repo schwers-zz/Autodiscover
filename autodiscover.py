@@ -194,14 +194,14 @@ def auto_redirect(url, email, pw, num):
             print "autoredicted error: %s" % sys.exc_info()[1]
 
 
-def send_xml(url, xml, opener, auth):
+def send_xml(url, send_xml, opener, auth):
     """ Sends the given xml to the url , with the given opener.
         If there is an authheader, it will be added to the request.
         NOTE :: encodes the xml to utf-8, and handles the default headers 
         Returns the response object directly.
     """
 
-    xml_to_send = unicode(xml, 'utf-8')
+    xml_to_send = unicode(send_xml, 'utf-8')
 
     headers =  { "User-Agent": 'bacon', 
                 "Content-Length": str(len(xml_to_send)),
