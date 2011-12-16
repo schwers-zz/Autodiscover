@@ -4,6 +4,7 @@ import sys
 from ntlm import HTTPNtlmAuthHandler
 import xml # for isinstance calls
 from xml.dom.minidom import parseString
+import logging
 
 # This code is used for communicating with exchange. With an email and password
 # it should be possible to follow the autodiscover protocol, and find an EWS url.
@@ -17,8 +18,14 @@ from xml.dom.minidom import parseString
 START = "2010-12-12T00:00:00-08:00"
 END = "2011-12-19T00:00:00-08:00"
 
-# Set for Debug purposes
-httplib.HTTPConnection.debuglevel = 1
+# Set for Debug output
+logger = logging.getLogger('autodiscover')
+hdlr = logging.FileHandler('./auto.log')
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+hdlr.setFormatter(formatter)
+logger.addHandler(hdlr)
+# Change the log output level
+logger.setLevel(logging.DEBUG)
 
 # Define Helper Functions
 
@@ -84,14 +91,14 @@ def try_url(url, path, port):
                                 or ('FAILED', error_string) (if it failed)
     """ 
 
-    print "Creating connection to %s%s on port %s" % (str(url), str(path), str(port))
+    logger.debug("Creating connection to %s%s on port %s" % (str(url), str(path), str(port)))
     try:
         test = httplib.HTTPConnection(url, port)
         test.request('GET', path)
         
         response = test.getresponse()
         # see if there's a location, handle appropriately
-        print "In attempt, found response: %s" % (response.read())
+        logger.debug("In attempt, found response: %s" % (response.read()))
         
         location = response.getheader("Location")
         if (location != None):
@@ -125,7 +132,7 @@ def try_autodiscover(url, email, pw):
     auto_path = "/autodiscover/autodiscover.xml"
 
     def handle_attempt(attempt):
-        print "Handle attempt: ", attempt
+        logger.debug("Handle attempt: %s" % attempt)
         result = attempt[0]
         if (result == "Redirect"):
             return auto_redirect(attempt[1], email, pw, 0)
@@ -141,23 +148,23 @@ def try_autodiscover(url, email, pw):
     res1 = handle_attempt(try1)
 
     if not res1:
-    	print "try_get %s failed with %s" % (url, str(res1))
+    	logger.debug("try_get %s failed with %s" % (url, str(res1)))
         # the request failed, so just bail out
 
     elif isinstance(res1, xml.dom.minidom.Document):
         return res1
     
     # Might have been a redirect to an https address, so try again
-    print "trying ssl %s" % str(url)
+    logger.debug("trying ssl %s" % str(url))
     try2 = try_ssl(url, auto_path)
     res2 = handle_attempt(try2)
 
     if not res2:
-        print "failed to https connect to %s" % url
+        logger.debug("failed to https connect to %s" % url)
     elif isinstance(res2, xml.dom.minidom.Document):
         return res2
     else:
-    	print "https connect to %s returned %s" % (url, str(res2))
+    	logger.debug("https connect to %s returned %s" % (url, str(res2)))
         # Send the authenticated POST request and see what happends
         try_post = autoredirect(url, email, pw, 0) 
         return try_post
@@ -188,10 +195,10 @@ def auto_redirect(url, email, pw, num):
                 	return auto_redirect(location, email, pw, num + 1)
             else:
             	body = str(try_post.read())
-                print "autoredirected xml send -> %s" % body
+                logger.debug("autoredirected xml send -> %s" % body)
                 return parseString(body)
         except:
-            print "autoredicted error: %s" % sys.exc_info()[1]
+            logger.debug("autoredicted error: %s" % sys.exc_info()[1])
 
 
 def send_xml(url, send_xml, opener, auth):
@@ -210,11 +217,9 @@ def send_xml(url, send_xml, opener, auth):
     if auth:
     	headers['Authorization'] = auth
 
-    print headers
-
     request = urllib2.Request(url=url, data=xml_to_send, headers=headers)
 
-    print str(request)
+    logger.debug("Sending: %s" % str(request))
 
     return opener.open(request)
     
@@ -251,8 +256,13 @@ class RedirectHandler(urllib2.HTTPRedirectHandler):
                 result = urllib2.HTTPRedirectHandler.http_error_302(
                         self, req, fp, code, msg, headers) 
                 result.status = code
-                print headers
+                logger.warning("http_redirect_handler, headers: %s" % headers)
                 return headers
+
+
+class AutodiscoverException(Exception):
+    def __init__(self, message):
+        self.message = message
 
 
 def default_opener():
@@ -325,7 +335,6 @@ def get_ews_from_xml(xml_data):
         types = proto.getElementsByTagName('Type')
         if (len(types) > 0):
         	proto_type = types[0].firstChild.data
-        	print "protocol: %s has proto_type: %s" % (proto.toxml(), proto_type)
         	
         	if (proto_type == "EXPR"):
         		return proto.getElementsByTagName('EwsUrl')[0].firstChild.data
@@ -345,8 +354,6 @@ def calendar_items(email, password, start, end):
 
     auto_xml = autodiscover(email, password)
 
-    print auto_xml
-    
     if not auto_xml:
     	return False
     
@@ -354,21 +361,20 @@ def calendar_items(email, password, start, end):
     assert len(auto_xml.getElementsByTagName('Autodiscover')) == 1
 
     ews_url = get_ews_from_xml(auto_xml)
-    print ews_url
+    logger.debug("Found ews url:%s" % ews_url)
 
     if not ews_url:
     	return False
 
     cal_xml = calendaritem_xml(default_shape(), start, end)
-    print cal_xml
 
     try:
         try_cal = send_xml(ews_url, cal_xml, default_opener(), basic_auth_header(email, password))
 
         if try_cal:
         	cal_item_xml = parseString(try_cal.read())
-        	print cal_item_xml.toprettyxml()
-        	print try_cal.headers
+        	logger.debug("Found calendar item xml: %s" % cal_item_xml.toxml())
+
         	return cal_item_xml
         else:
         	return False
@@ -378,13 +384,14 @@ def calendar_items(email, password, start, end):
         # requires ntlm authentication. If thats the case, try again using the ntlm package
         
         if (401 == e.code):
-        	print "HTTPError401, trying ntlm"
+        	logger.warning("HTTPError401, trying ntlm for \
+        	        %(url)s and %(user)s" % dict(url=ews_url, user=email))
+
         	return ntlm_calendar_items(ews_url, email, password, cal_xml)
         else:
-            print "Error:%s" % str(e)
+            logger.warning("Error:%s" % str(e))
             return False
     except:
-        print "Unknown error: %s" % str(sys.exc_info()[1])
         return False
 
 def ntlm_calendar_items(ews_url, email, pw, cal_xml):
@@ -395,12 +402,8 @@ def ntlm_calendar_items(ews_url, email, pw, cal_xml):
 
     # for ntlm we need to create a Domain\username from the email
     domuname = get_domain_uname(email)
-    print domuname
 
     opener = ntlm_opener(ews_url, domuname, pw)
-    print "made ntlm opener"
-
-    print cal_xml
 
     try:
         # We don't need to add the basic-auth-header because the ntlm opener will
@@ -409,18 +412,14 @@ def ntlm_calendar_items(ews_url, email, pw, cal_xml):
 
         if try_cal:
         	cal_item_xml = parseString(try_cal.read())
-        	print cal_item_xml.toprettyxml()
+        	logger.debug("NTLM Found calendar item xml: %s" % cal_item_xml.toxml())
+
         	return cal_item_xml
         else:
         	return False
 
     except:
-        print "Error: %s" % str(sys.exc_info()[1])
         return False
 
 def get_cal_items(email, pw):
     return calendar_items(email, pw, START, END)
-
-if __name__ == '__main__':
-	print autodiscover_xml("test@exchangetest365.onmicrosoft.com")
-	get_cal_items("test@exchangetest365.onmicrosoft.com", "283Exchange")
