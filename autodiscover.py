@@ -1,36 +1,70 @@
 import httplib, urllib2
-import base64
 import sys
-from ntlm import HTTPNtlmAuthHandler
+import base64
+import logging
 import xml # for isinstance calls
 from xml.dom.minidom import parseString
-import logging
+from ntlm import HTTPNtlmAuthHandler
+# http://code.google.com/p/python-ntlm/
 
 # This code is used for communicating with exchange. With an email and password
 # it should be possible to follow the autodiscover protocol, and find an EWS url.
 # EWS is Exchange Web Services, and can be queried for specifics about a specific
 # user's calendar events, or even the mutual availability of users
-#
+
 # URL for implenting an Autodiscover-Client:
 # http://msdn.microsoft.com/en-us/library/ee332364(v=EXCHG.140).aspx
 
-# Useful for Testing
-START = "2010-12-12T00:00:00-08:00"
-END = "2011-12-19T00:00:00-08:00"
 
 # Set for Debug output
 logger = logging.getLogger('autodiscover')
 hdlr = logging.FileHandler('./auto.log')
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+formatter = logging.Formatter('%(asctime)s %(funcName)s %(levelname)s %(message)s')
 hdlr.setFormatter(formatter)
-logger.addHandler(hdlr)
 # Change the log output level
+hdlr.setLevel(logging.DEBUG)
+logger.addHandler(hdlr)
 logger.setLevel(logging.DEBUG)
+
+# Define Helper Classes
+
+class RedirectHandler(urllib2.HTTPRedirectHandler):
+    """ urllib2's default URLOpener follows redirects. It does not however
+        repost the xml. To deal with this, when a redirect is found,
+        return the headers and let the calling function deal with things.
+    """
+
+    def http_error_301(self, req, fp, code, msg, headers):
+        result = urllib2.HTTPRedirectHandler.http_error_301(
+                self, req, fp, code, msg, headers)
+        result.status = code
+        logger.debug("http_error_301, headers: %s" % headers)
+        return headers
+    
+    
+    def http_error_302(self, req, fp, code, msg, headers):
+        result = urllib2.HTTPRedirectHandler.http_error_302(
+                self, req, fp, code, msg, headers) 
+        result.status = code
+        logger.debug("http_error_302, headers: %s" % headers)
+        return headers
+
+
+class AutodiscoverError(Exception):
+    def __init__(self, message):
+        self.message = message
+
 
 # Define Helper Functions
 
-def xml_strip_newline(xml_string):
-    return xml_string.replace('\n', '')
+def xml_string_clean(xml_string):
+    """ Cleaner for xml strings generated in the code. """
+
+    xml_string = xml_string.replace('\n', '')
+    xml_string = xml_string.replace('    ', '')
+
+    return xml_string
+
 
 def autodiscover_xml(email):
     """ Expects to have a string thats a valid email address for the intended exchange user
@@ -43,7 +77,7 @@ def autodiscover_xml(email):
     http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a
     </AcceptableResponseSchema></Request></Autodiscover>""" % dict(email=email)
 
-    return xml_strip_newline(auto_xml)
+    return xml_string_clean(auto_xml)
 
 
 def calendaritem_xml(shape, start, end):
@@ -65,177 +99,144 @@ def calendaritem_xml(shape, start, end):
     <t:DistinguishedFolderId Id="calendar"/>
     </ParentFolderIds></FindItem></soap:Body></soap:Envelope>""" % dict(shape=shape, start=start, end=end)
 
-    return xml_strip_newline(cal_xml)
+    return xml_string_clean(cal_xml)
 
 
-def default_shape():
-    """ Returns an xml string of the default shape of a calendar item request
+def item_properties():
+    """ Returns an xml string of the default shape of a calendar item request.
+        A shape is set of fields returned with each calendar item.
         NOTE :: start here for further shape properties
             http://msdn.microsoft.com/en-us/library/aa564515(EXCHG.140).aspx
     """
+
     shape_xml = """<ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties>
     <t:FieldURI FieldURI="calendar:Start"/>
     <t:FieldURI FieldURI="calendar:End"/>
-    <t:FieldURI FieldURI="item:LastModifiedTime"/>
-    <t:FieldURI FieldURI="item:IsUnmodified"/>
     <t:FieldURI FieldURI="item:Subject"/>
+    <t:FieldURI FieldURI="item:LastModifiedTime"/>
     </t:AdditionalProperties></ItemShape>"""
 
-    return xml_string_newline(auto_xml)
+    return xml_string_clean(shape_xml)
 
 
-def try_url(url, path, port):
-    """ Tries to open the url on the given port
-        returns either a tuple of ('Redirect', LOCATION_TO_REDIRECT)
-                                or ('Response', RESPONSE)
-                                or ('FAILED', error_string) (if it failed)
-    """ 
+def autodiscover_get_method(url, email, pw):
+    """ The GET request part of the autodiscover client protocol. 
+        Try sending a GET request to autodiscover.domain/autodiscover/autodiscover.xml
 
-    logger.debug("Creating connection to %s%s on port %s" % (str(url), str(path), str(port)))
-    try:
-        test = httplib.HTTPConnection(url, port)
-        test.request('GET', path)
-        
-        response = test.getresponse()
-        # see if there's a location, handle appropriately
-        logger.debug("In attempt, found response: %s" % (response.read()))
-        
-        location = response.getheader("Location")
-        if (location != None):
-        	return ("Redirect", location)
-        
-        else:
-        	return ("Response", response.read())
-    except:
-        # Something broke, maybe it couldn't connect over ssl, or something else
-        return ("FAILED", sys.exc_info()[1])
-
-
-def try_ssl(url, path):
-    """ Tries to open an ssl connection on the url with the given path """
-    return try_url(url, path, 443)
-
-
-def try_get(url, path):
-    """ Tries to open a connection on the url with the given path """
-    return try_url(url, path, 80)
-
-def try_autodiscover(url, email, pw):
-    """ 'Tries' a url according to the spec for calling autodiscover.
-        Sends a 'GET' request to the url, if it succeeds, sends an HTTPS
-        request, if valid, sends an authenticated 'POST' request.
-        If the value of the response is a redirect, recurse on the new url.
-        
-        Returns the Autodiscover response if it gets one, otherwise returns 
-        false.
+        If there's a redirect, go follow it with the autoredirect code.
     """
-    auto_path = "/autodiscover/autodiscover.xml"
 
-    def handle_attempt(attempt):
-        logger.debug("Handle attempt: %s" % attempt)
-        result = attempt[0]
-        if (result == "Redirect"):
-            return auto_redirect(attempt[1], email, pw, 0)
-        elif (result == "Response"):
-            return attempt[1]
-        else:
-            # verify the try____ call is working
-    	    assert result == "FAILED" 
-    	    return False
+    path = "/autodiscover/autodiscover.xml"
+    url = "autodiscover." + url
 
+    test = httplib.HTTPConnection(url, 80)
+    test.request('GET', path)
+
+    response = test.getresponse()
+    location = response.getheader("Location")
+
+    # If there's a redirect, go follow it, otherwise, fail
+    if location is None:
+    	raise AutodiscoverError("autodiscover_get_method failed for %s" % url)
+
+    return auto_redirect(location, email, pw)
     
-    try1 = try_get(url, auto_path)
-    res1 = handle_attempt(try1)
 
-    if not res1:
-    	logger.debug("try_get %s failed with %s" % (url, str(res1)))
-        # the request failed, so just bail out
-
-    elif isinstance(res1, xml.dom.minidom.Document):
-        return res1
-    
-    # Might have been a redirect to an https address, so try again
-    logger.debug("trying ssl %s" % str(url))
-    try2 = try_ssl(url, auto_path)
-    res2 = handle_attempt(try2)
-
-    if not res2:
-        logger.debug("failed to https connect to %s" % url)
-    elif isinstance(res2, xml.dom.minidom.Document):
-        return res2
-    else:
-    	logger.debug("https connect to %s returned %s" % (url, str(res2)))
-        # Send the authenticated POST request and see what happends
-        try_post = autoredirect(url, email, pw, 0) 
-        return try_post
-
-
-def auto_redirect(url, email, pw, num):
+def auto_redirect(url, email, pw):
     """ If the result of trying an autodiscover endpoing is a redirect,
         assume its a valid https endpoint, then send it xml. Don't follow more
         than 10 redirects according to the autodiscover client spec
     """
 
-    if (num > 10):
-    	return False
-    else:
+    for i in range(10):
+        logger.debug("Redirecting %(user)s to \
+                autodiscover potential: %(url)s" % dict(user=email, url=url))
         try:
-            try_post = send_xml(url, autodiscover_xml(email),
-                    default_opener(), basic_auth_header(email, pw))
+            response = send_xml(url, email, pw, autodiscover_xml(email))
 
-            # try_post might be an HTTPMessage telling us to redirect, so
-            # check if thats the case. If so, redo the request. This is because
-            # the httplib doesn't repost the xml data, so do it manually AND keep
-            # track of the number of redirects at the same time
-            if (isinstance(try_post, httplib.HTTPMessage)):
-            	location = try_post.getheader('Location')
-                if (location == None):
-                	return False
+            # response might be an HTTPMessage telling us to redirect, so
+            # check if thats the case. If so, redo the request
+            if isinstance(response, httplib.HTTPMessage):
+            	location = response.getheader('Location')
+                if location is None:
+                    # The http message headers should come from RedirectHandler
+                    # therefore, there should be a 'Location' header
+                	raise AutodiscoverError("Recieved HTTPMessage without redirect header")
                 else:
-                	return auto_redirect(location, email, pw, num + 1)
+                    # otherwise continue
+                	url = location
+                	continue
+                	
             else:
-            	body = str(try_post.read())
-                logger.debug("autoredirected xml send -> %s" % body)
+                # A response was recieved, try to parse it and return it
+            	body = str(response.read())
+                logger.debug("autoredirect xml sending: %s" % body)
                 return parseString(body)
-        except:
-            logger.debug("autoredicted error: %s" % sys.exc_info()[1])
+
+        except AutodiscoverError, e:
+            logger.debug("Autodiscover exception caught in auto_redirect: %s" % str(e))
+            raise e
+    
+    # More than 10 requests were made, or some other error occured
+    error_str = "auto_redirect failed to autodiscover $(url)s \
+            for %(email)s:%(pw)s" % dict(url=url, email=email, pw=pw)
+
+    raise AutodiscoverError(error_str)
 
 
-def send_xml(url, send_xml, opener, auth):
+def send_xml(url, email, pw, send_xml):
     """ Sends the given xml to the url , with the given opener.
         If there is an authheader, it will be added to the request.
         NOTE :: encodes the xml to utf-8, and handles the default headers 
         Returns the response object directly.
     """
 
+    logger.debug("send_xml: %(xml)s" % dict(xml=send_xml))
+
     xml_to_send = unicode(send_xml, 'utf-8')
+     
+    # Authentication headers have to be added, because urllib2 first sends an
+    # unauthenticated request, so things break prematurely
+    b64userpw = base64.encodestring("%s:%s" % (email, pw))[:-1]
 
-    headers =  { "User-Agent": 'bacon', 
-                "Content-Length": str(len(xml_to_send)),
-                "Content-Type": "text/xml; charset=utf-8" }
-
-    if auth:
-    	headers['Authorization'] = auth
+    headers = {"Content-Type": "text/xml; charset=utf-8",
+            "Authorization": "Basic %s" % b64userpw }
 
     request = urllib2.Request(url=url, data=xml_to_send, headers=headers)
 
     logger.debug("Sending: %s" % str(request))
 
-    return opener.open(request)
+    # try opening it with a default opener
+    opener = default_opener(url, email, pw)
+    try:
+        return opener.open(request)
+        
+    # If that didn't work, and was a 401, it might require NTLM authentication
+    except urllib2.HTTPError, e:
+        if 401 != e.code:
+        	logger.warn("send_xml encountered unexpected \
+        	        httperror %(error)s when posting to url:%(url)s" % dict(error=e, url=url))
+        	raise e
+        else:
+        	opener = ntlm_opener(url, email, pw)
+        	return opener.open(request)
     
-
-def basic_auth_header(user, password):
-    """ Returns a header for basic auth of the username and password.
-        Base64 encodes user:password
-    """
-    
-    base64userpass = base64.encodestring("%s:%s" % (user, password))[:-1]
-
-    return "Basic %s" % base64userpass
+    # It might have been another http related error, like the url being invalid
+    except urllib2.URLError, e:
+        raise AutodiscoverError("URLerror caught in send_xml: %s" % e)
 
 
-def ntlm_opener(url, user, password):
+def default_opener(url, email, pw):
+    """ The default opener to use for sending xml requests."""
+
+    return urllib2.build_opener(RedirectHandler)
+
+
+def ntlm_opener(url, email, password):
     """ Returns a urllib2.OpenDirector for the given url, that requires NTLM authentication. """
+
+    # the ntlm library requires Domain\user format
+    user = get_domain_uname(email)
 
     pass_mangr = urllib2.HTTPPasswordMgrWithDefaultRealm()
     pass_mangr.add_password(None, url, user, password)
@@ -243,31 +244,6 @@ def ntlm_opener(url, user, password):
     auth_NTLM = HTTPNtlmAuthHandler.HTTPNtlmAuthHandler(pass_mangr)
 
     return urllib2.build_opener(auth_NTLM)
-
-
-class RedirectHandler(urllib2.HTTPRedirectHandler):
-        def http_error_301(self, req, fp, code, msg, headers):
-                result = urllib2.HTTPRedirectHandler.http_error_301( 
-                        self, req, fp, code, msg, headers)
-                result.status = code
-                raise Exception("Permanent Redirect: %s" % 301)
-
-        def http_error_302(self, req, fp, code, msg, headers):
-                result = urllib2.HTTPRedirectHandler.http_error_302(
-                        self, req, fp, code, msg, headers) 
-                result.status = code
-                logger.warning("http_redirect_handler, headers: %s" % headers)
-                return headers
-
-
-class AutodiscoverException(Exception):
-    def __init__(self, message):
-        self.message = message
-
-
-def default_opener():
-    """ The default opener to use for sending xml requests """
-    return urllib2.build_opener(RedirectHandler)
 
 
 def get_domain(email):
@@ -278,6 +254,7 @@ def get_domain(email):
     assert split[1] == '@'
     
     return split[2]
+
 
 def get_domain_uname(email):
     """ Returns a Domain\username string for a given email """
@@ -298,31 +275,30 @@ def autodiscover(email, password):
         TODO:: have auto_redirect check certificates to ssl connections 
         and not blindly send username:password's ...
     """
+
     domain = get_domain(email)
 
+    # Step 1. Try appending to the domain and using Authenticated Post Requests
     url = "https://%s/autodiscover/autodiscover.xml" % domain
-    attempt = auto_redirect(url, email, password, 0)
+    try:
+        return auto_redirect(url, email, password)
 
-    if attempt:
-        return attempt
+    except AutodiscoverError, e:
+        logger.debug("Failed attempt to autodiscover via %s, trying Step 2" % url)
 
+    # Step 2. Try adding autodiscover. to the url
     url = "https://autodiscover.%s/autodiscover/autodiscover.xml" % domain
-    attempt = auto_redirect(url, email, password, 0)
+    try:
+        return auto_redirect(url, email, password)
 
-    if attempt:
-    	return attempt
+    except AutodiscoverError, e:
+        logger.debug("Failed attempt to autodiscover via %s, trying Step 3" % url)
 
-    # if all else fails, use try_autodiscover, which will send unauthenticated get-requests and
-    # hopefully succeed in getting a redirect location to start the auto_redirect process
 
-    get_url = "autodiscover.%s" % domain
-    attempt = try_autodiscover(get_url, email, password)
-
-    if attempt:
-    	return attempt
-
-    # if there's control-flow here, it failed
-    return False
+    # Step 3. Try sending an un-authenticated GET request to the previous url
+    # IF There's a redirect, autodiscover_get_method will follow this
+    # Note :: autodiscover_get_method will fix the domain to what it needs to be
+    return autodiscover_get_method(domain, email, password)
 
 
 def get_ews_from_xml(xml_data):
@@ -333,17 +309,15 @@ def get_ews_from_xml(xml_data):
     protocols = xml_data.getElementsByTagName('Protocol')
     for proto in protocols:
         types = proto.getElementsByTagName('Type')
-        if (len(types) > 0):
+        if types:
         	proto_type = types[0].firstChild.data
-        	
-        	if (proto_type == "EXPR"):
+        	if "EXPR" == proto_type:
         		return proto.getElementsByTagName('EwsUrl')[0].firstChild.data
         	else:
         		continue
-        else:
-        	return False
-    # if something hasn't been returned by here, there's a problem
-    return False
+
+    # nothing returned, raise an exception
+    raise AutodiscoverError("Coudn't retrieve ews url from autodiscove response")
 
 
 def calendar_items(email, password, start, end):
@@ -353,9 +327,6 @@ def calendar_items(email, password, start, end):
     """
 
     auto_xml = autodiscover(email, password)
-
-    if not auto_xml:
-    	return False
     
     # check that the xml from auto_discover is valid
     assert len(auto_xml.getElementsByTagName('Autodiscover')) == 1
@@ -363,63 +334,27 @@ def calendar_items(email, password, start, end):
     ews_url = get_ews_from_xml(auto_xml)
     logger.debug("Found ews url:%s" % ews_url)
 
-    if not ews_url:
-    	return False
+    cal_xml = calendaritem_xml(item_properties(), start, end)
 
-    cal_xml = calendaritem_xml(default_shape(), start, end)
+    cal_item_resp = send_xml(ews_url, email, pw, cal_xml)
 
-    try:
-        try_cal = send_xml(ews_url, cal_xml, default_opener(), basic_auth_header(email, password))
+    cal_item_xml = parseString(cal_item_resp.read())
+    logger.debug("Found calendar item xml: %s" % cal_item_xml.toxml())
 
-        if try_cal:
-        	cal_item_xml = parseString(try_cal.read())
-        	logger.debug("Found calendar item xml: %s" % cal_item_xml.toxml())
+    return cal_item_xml
 
-        	return cal_item_xml
-        else:
-        	return False
 
-    except urllib2.HTTPError, e:
-        # check to see if its a 401 error, if so, there's a chance this https endpoint 
-        # requires ntlm authentication. If thats the case, try again using the ntlm package
-        
-        if (401 == e.code):
-        	logger.warning("HTTPError401, trying ntlm for \
-        	        %(url)s and %(user)s" % dict(url=ews_url, user=email))
+if __name__ == '__main__':
+    if 2 > len(sys.argv):
+        print "usage: autodiscover.py email password"
+        sys.exit()
 
-        	return ntlm_calendar_items(ews_url, email, password, cal_xml)
-        else:
-            logger.warning("Error:%s" % str(e))
-            return False
-    except:
-        return False
+    # Default time range Useful for Testing
+    START = "2010-12-12T00:00:00-08:00"
+    END = "2011-12-19T00:00:00-08:00"
+    
+    email = sys.argv[1]
+    pw = sys.argv[2]
 
-def ntlm_calendar_items(ews_url, email, pw, cal_xml):
-    """ Tries to retrieve calendar item data with the given calitem request xml,
-        at the destination ews_url, with the given email and pw.
-        Determines the domain through the email and creates an ntlm opener.
-    """
-
-    # for ntlm we need to create a Domain\username from the email
-    domuname = get_domain_uname(email)
-
-    opener = ntlm_opener(ews_url, domuname, pw)
-
-    try:
-        # We don't need to add the basic-auth-header because the ntlm opener will
-        # handle authorization the connection
-        try_cal = send_xml(ews_url, cal_xml, opener, None)
-
-        if try_cal:
-        	cal_item_xml = parseString(try_cal.read())
-        	logger.debug("NTLM Found calendar item xml: %s" % cal_item_xml.toxml())
-
-        	return cal_item_xml
-        else:
-        	return False
-
-    except:
-        return False
-
-def get_cal_items(email, pw):
-    return calendar_items(email, pw, START, END)
+    print calendar_items(email, pw, START, END).toprettyxml()
+    sys.exit()
