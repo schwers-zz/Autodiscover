@@ -294,7 +294,6 @@ def autodiscover(email, password):
     except AutodiscoverError, e:
         logger.debug("Failed attempt to autodiscover via %s, trying Step 3" % url)
 
-
     # Step 3. Try sending an un-authenticated GET request to the previous url
     # IF There's a redirect, autodiscover_get_method will follow this
     # Note :: autodiscover_get_method will fix the domain to what it needs to be
