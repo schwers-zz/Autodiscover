@@ -137,7 +137,7 @@ def autodiscover_get_method(url, email, pw):
 
     # If there's a redirect, go follow it, otherwise, fail
     if location is None:
-    	raise AutodiscoverError("autodiscover_get_method failed for %s" % url)
+        raise AutodiscoverError("autodiscover_get_method failed for %s" % url)
 
     return auto_redirect(location, email, pw)
     
@@ -157,19 +157,19 @@ def auto_redirect(url, email, pw):
             # response might be an HTTPMessage telling us to redirect, so
             # check if thats the case. If so, redo the request
             if isinstance(response, httplib.HTTPMessage):
-            	location = response.getheader('Location')
+                location = response.getheader('Location')
                 if location is None:
                     # The http message headers should come from RedirectHandler
                     # therefore, there should be a 'Location' header
-                	raise AutodiscoverError("Recieved HTTPMessage without redirect header")
+                    raise AutodiscoverError("Recieved HTTPMessage without redirect header")
                 else:
                     # otherwise continue
-                	url = location
-                	continue
-                	
+                    url = location
+                    continue
+                    
             else:
                 # A response was recieved, try to parse it and return it
-            	body = str(response.read())
+                body = str(response.read())
                 logger.debug("autoredirect xml sending: %s" % body)
                 return parseString(body)
 
@@ -214,12 +214,12 @@ def send_xml(url, email, pw, body_xml):
     # If that didn't work, and was a 401, it might require NTLM authentication
     except urllib2.HTTPError, e:
         if 401 != e.code:
-        	logger.warn("send_xml encountered unexpected \
-        	        httperror %(error)s when posting to url:%(url)s" % dict(error=e, url=url))
-        	raise e
+            logger.warn("send_xml encountered unexpected \
+                    httperror %(error)s when posting to url:%(url)s" % dict(error=e, url=url))
+            raise e
         else:
-        	opener = ntlm_opener(url, email, pw)
-        	return opener.open(request)
+            opener = ntlm_opener(url, email, pw)
+            return opener.open(request)
     
     # It might have been another http related error, like the url being invalid
     except urllib2.URLError, e:
@@ -309,9 +309,9 @@ def get_ews_from_xml(xml_data):
     for proto in protocols:
         types = proto.getElementsByTagName('Type')
         if types:
-        	proto_type = types[0].firstChild.data
-        	if "EXPR" == proto_type:
-        		return proto.getElementsByTagName('EwsUrl')[0].firstChild.data
+            proto_type = types[0].firstChild.data
+            if "EXPR" == proto_type:
+                return proto.getElementsByTagName('EwsUrl')[0].firstChild.data
 
     # nothing returned, raise an exception
     raise AutodiscoverError("Coudn't retrieve ews url from autodiscove response")

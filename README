@@ -1,0 +1,18 @@
+Autodiscover.py README
+
+The driver of the autodiscover proces is autodiscover(...).
+It folows steps for implenting an autodiscover client found here :
+    http://msdn.microsoft.com/en-us/library/ee332364(v=EXCHG.140).aspx
+    "Calling Autodiscover"
+
+It implements steps 2-6, BUT NOT 5.
+We can skip step 1, its an Active Directory thing.
+Step 5 should be implemented when we can test against an exchange account
+    whose domain has an srv record look up. This should be easy to do.
+    
+In autodiscover(...):
+    - wrap "Step 3" in a try/except that handles AutodiscoverErrors,
+    --- In the except AutodiscoverError, e:
+        - Do a DNS SRV-record query for _autodiscover._tcp.domain
+        - If there are results, use a random one as the argument to
+          autoredirect, witht he path=/autodiscover/autodiscover.xml
