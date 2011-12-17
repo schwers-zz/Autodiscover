@@ -34,21 +34,15 @@ class RedirectHandler(urllib2.HTTPRedirectHandler):
         return the headers and let the calling function deal with things.
     """
 
-    def http_error_301(self, req, fp, code, msg, headers):
-        result = urllib2.HTTPRedirectHandler.http_error_301(
-                self, req, fp, code, msg, headers)
-        result.status = code
-        logger.debug("http_error_301, headers: %s" % headers)
-        return headers
-    
-    
-    def http_error_302(self, req, fp, code, msg, headers):
-        result = urllib2.HTTPRedirectHandler.http_error_302(
-                self, req, fp, code, msg, headers) 
-        result.status = code
-        logger.debug("http_error_302, headers: %s" % headers)
+    def handle_redirect(self, req, fp, code, msg, headers):
+        logger.debug("http redirect headers found: %s" % headers)
         return headers
 
+        return headers
+
+    http_error_301 = handle_redirect
+    http_error_302 = handle_redirect
+    
 
 class AutodiscoverError(Exception):
     def __init__(self, message):
