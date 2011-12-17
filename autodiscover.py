@@ -184,7 +184,7 @@ def auto_redirect(url, email, pw):
     raise AutodiscoverError(error_str)
 
 
-def send_xml(url, email, pw, send_xml):
+def send_xml(url, email, pw, body_xml):
     """ Sends the given xml to the url , with the given opener.
         If there is an authheader, it will be added to the request.
         NOTE :: encodes the xml to utf-8, and handles the default headers 
@@ -193,16 +193,16 @@ def send_xml(url, email, pw, send_xml):
 
     logger.debug("send_xml: %(xml)s" % dict(xml=send_xml))
 
-    xml_to_send = unicode(send_xml, 'utf-8')
+    body_xml_send = body_xml.encode("utf-8")
      
     # Authentication headers have to be added, because urllib2 first sends an
     # unauthenticated request, so things break prematurely
-    b64userpw = base64.encodestring("%s:%s" % (email, pw))[:-1]
+    b64userpw = base64.encodestring("%s:%s" % (email, pw)).strip()
 
     headers = {"Content-Type": "text/xml; charset=utf-8",
             "Authorization": "Basic %s" % b64userpw }
 
-    request = urllib2.Request(url=url, data=xml_to_send, headers=headers)
+    request = urllib2.Request(url=url, data=body_xml_send, headers=headers)
 
     logger.debug("Sending: %s" % str(request))
 
@@ -312,8 +312,6 @@ def get_ews_from_xml(xml_data):
         	proto_type = types[0].firstChild.data
         	if "EXPR" == proto_type:
         		return proto.getElementsByTagName('EwsUrl')[0].firstChild.data
-        	else:
-        		continue
 
     # nothing returned, raise an exception
     raise AutodiscoverError("Coudn't retrieve ews url from autodiscove response")
