@@ -1,3 +1,30 @@
+"""
+@author Ryan Schwers
+@date 16 December, 2011
+
+The MIT License (MIT)
+
+Copyright (c) 2013 Ryan Schwers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+"""
+
 import httplib, urllib2
 import sys
 import base64
@@ -42,7 +69,7 @@ class RedirectHandler(urllib2.HTTPRedirectHandler):
 
     http_error_301 = handle_redirect
     http_error_302 = handle_redirect
-    
+
 
 class AutodiscoverError(Exception):
     def __init__(self, message):
@@ -63,7 +90,7 @@ def xml_string_clean(xml_string):
 def autodiscover_xml(email):
     """ Expects to have a string thats a valid email address for the intended exchange user
         Returns an xml string used to query the autodiscover servcie.
-    """ 
+    """
 
     auto_xml = """<?xml version="1.0" encoding="utf-8"?>
     <Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/requestschema/2006">
@@ -75,17 +102,17 @@ def autodiscover_xml(email):
 
 
 def calendaritem_xml(shape, start, end):
-    """ start & end -- valid utc strings designating a time range in which to query for 
-            calendar events. 
-        shpae -- xml string for the calendaritem shape according to the finditem spec, 
+    """ start & end -- valid utc strings designating a time range in which to query for
+            calendar events.
+        shpae -- xml string for the calendaritem shape according to the finditem spec,
             this is where adjustments such as subject, start time, end time, last modified time
             and etc are set. This dicates the response.
     """
 
-    cal_xml = """<?xml version="1.0" encoding="utf-8"?><soap:Envelope 
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
-    xmlns:xsd="http://www.w3.org/2001/XMLSchema" 
-    xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" 
+    cal_xml = """<?xml version="1.0" encoding="utf-8"?><soap:Envelope
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
     xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
     <soap:Header><t:RequestServerVersion Version="Exchange2007_SP1"/></soap:Header><soap:Body>
     <FindItem Traversal="Shallow" xmlns="http://schemas.microsoft.com/exchange/services/2006/messages">
@@ -114,7 +141,7 @@ def item_properties():
 
 
 def autodiscover_get_method(url, email, pw):
-    """ The GET request part of the autodiscover client protocol. 
+    """ The GET request part of the autodiscover client protocol.
         Try sending a GET request to autodiscover.domain/autodiscover/autodiscover.xml
 
         If there's a redirect, go follow it with the autoredirect code.
@@ -134,7 +161,7 @@ def autodiscover_get_method(url, email, pw):
         raise AutodiscoverError("autodiscover_get_method failed for %s" % url)
 
     return auto_redirect(location, email, pw)
-    
+
 
 def auto_redirect(url, email, pw):
     """ If the result of trying an autodiscover endpoing is a redirect,
@@ -160,7 +187,7 @@ def auto_redirect(url, email, pw):
                     # otherwise continue
                     url = location
                     continue
-                    
+
             else:
                 # A response was recieved, try to parse it and return it
                 body = str(response.read())
@@ -170,7 +197,7 @@ def auto_redirect(url, email, pw):
         except AutodiscoverError, e:
             logger.debug("Autodiscover exception caught in auto_redirect: %s" % str(e))
             raise e
-    
+
     # More than 10 requests were made, or some other error occured
     error_str = "auto_redirect failed to autodiscover $(url)s \
             for %(email)s:%(pw)s" % dict(url=url, email=email, pw=pw)
@@ -181,14 +208,14 @@ def auto_redirect(url, email, pw):
 def send_xml(url, email, pw, body_xml):
     """ Sends the given xml to the url , with the given opener.
         If there is an authheader, it will be added to the request.
-        NOTE :: encodes the xml to utf-8, and handles the default headers 
+        NOTE :: encodes the xml to utf-8, and handles the default headers
         Returns the response object directly.
     """
 
     logger.debug("send_xml: %(xml)s" % dict(xml=send_xml))
 
     body_xml_send = body_xml.encode("utf-8")
-     
+
     # Authentication headers have to be added, because urllib2 first sends an
     # unauthenticated request, so things break prematurely
     b64userpw = base64.encodestring("%s:%s" % (email, pw)).strip()
@@ -204,7 +231,7 @@ def send_xml(url, email, pw, body_xml):
     opener = default_opener(url, email, pw)
     try:
         return opener.open(request)
-        
+
     # If that didn't work, and was a 401, it might require NTLM authentication
     except urllib2.HTTPError, e:
         if 401 != e.code:
@@ -214,7 +241,7 @@ def send_xml(url, email, pw, body_xml):
         else:
             opener = ntlm_opener(url, email, pw)
             return opener.open(request)
-    
+
     # It might have been another http related error, like the url being invalid
     except urllib2.URLError, e:
         raise AutodiscoverError("URLerror caught in send_xml: %s" % e)
@@ -234,7 +261,7 @@ def ntlm_opener(url, email, password):
 
     pass_mangr = urllib2.HTTPPasswordMgrWithDefaultRealm()
     pass_mangr.add_password(None, url, user, password)
-    
+
     auth_NTLM = HTTPNtlmAuthHandler.HTTPNtlmAuthHandler(pass_mangr)
 
     return urllib2.build_opener(auth_NTLM)
@@ -242,17 +269,17 @@ def ntlm_opener(url, email, password):
 
 def get_domain(email):
     """ Return the domain name for a given email """
-    
+
     # make a split in the form (<username>, '@', <domain>)
     split = email.partition('@')
     assert split[1] == '@'
-    
+
     return split[2]
 
 
 def get_domain_uname(email):
     """ Returns a Domain\username string for a given email """
-    
+
     # make a split, similiary to the get_domain function
     split = email.partition('@')
     assert split[1] == '@'
@@ -264,9 +291,9 @@ def autodiscover(email, password):
     """ Follows the steps of the autodiscover process to retrieve xml for a
         valid autodiscvoer response. If its unable to find one, it returns False.
         NOTE:: the api to autoredirect is passed 0, because according ot the
-        autodiscove spec we shouldn't follow more than 10 redirects. 
+        autodiscove spec we shouldn't follow more than 10 redirects.
 
-        TODO:: have auto_redirect check certificates to ssl connections 
+        TODO:: have auto_redirect check certificates to ssl connections
         and not blindly send username:password's ...
     """
 
@@ -318,7 +345,7 @@ def calendar_items(email, password, start, end):
     """
 
     auto_xml = autodiscover(email, password)
-    
+
     # check that the xml from auto_discover is valid
     assert len(auto_xml.getElementsByTagName('Autodiscover')) == 1
 
@@ -343,7 +370,7 @@ if __name__ == '__main__':
     # Default time range Useful for Testing
     START = "2010-12-12T00:00:00-08:00"
     END = "2011-12-19T00:00:00-08:00"
-    
+
     email = sys.argv[1]
     pw = sys.argv[2]
 
